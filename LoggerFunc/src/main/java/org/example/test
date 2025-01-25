@@ -1,0 +1,310 @@
+To develop a simple logging library in Java that meets the specified requirements, we can break down the task into several modular components:
+
+Logger: This will be the main interface for logging messages.
+LogLevel: An enum representing different log levels.
+Message: A class representing a log message with content and level.
+Sink: An interface representing a logging destination (e.g., ConsoleSink for stdout).
+Configuration: A class to handle logger configuration.
+SyncLogger and AsyncLogger: Concrete implementations of the logger that handle synchronous and asynchronous logging, respectively.
+Main: A driver application to demonstrate the usage of the library.
+Tests: Unit tests to verify synchronous logging, asynchronous logging, and concurrent logging.
+Here’s how we can implement this step-by-step:
+
+1. LogLevel Enum
+java
+Copy code
+public enum LogLevel {
+    DEBUG, INFO, WARN, ERROR, FATAL;
+}
+2. Message Class
+java
+Copy code
+import java.time.LocalDateTime;
+
+public class Message {
+    private final String content;
+    private final LogLevel level;
+    private final LocalDateTime timestamp;
+
+    public Message(String content, LogLevel level) {
+        this.content = content;
+        this.level = level;
+        this.timestamp = LocalDateTime.now();
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public LogLevel getLevel() {
+        return level;
+    }
+
+    public LocalDateTime getTimestamp() {
+        return timestamp;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("%s [%s] %s", timestamp, level, content);
+    }
+}
+3. Sink Interface and ConsoleSink Implementation
+java
+Copy code
+public interface Sink {
+    void log(Message message);
+    LogLevel getLevel();
+}
+
+public class ConsoleSink implements Sink {
+    private final LogLevel level;
+
+    public ConsoleSink(LogLevel level) {
+        this.level = level;
+    }
+
+    @Override
+    public void log(Message message) {
+        if (message.getLevel().ordinal() >= level.ordinal()) {
+            System.out.println(message);
+        }
+    }
+
+    @Override
+    public LogLevel getLevel() {
+        return level;
+    }
+}
+4. Configuration Class
+java
+Copy code
+public class Configuration {
+    private final String timestampFormat;
+    private final LogLevel logLevel;
+    private final boolean isAsync;
+    private final int bufferSize;
+    private final Sink sink;
+
+    public Configuration(String timestampFormat, LogLevel logLevel, boolean isAsync, int bufferSize, Sink sink) {
+        this.timestampFormat = timestampFormat;
+        this.logLevel = logLevel;
+        this.isAsync = isAsync;
+        this.bufferSize = bufferSize;
+        this.sink = sink;
+    }
+
+    public String getTimestampFormat() {
+        return timestampFormat;
+    }
+
+    public LogLevel getLogLevel() {
+        return logLevel;
+    }
+
+    public boolean isAsync() {
+        return isAsync;
+    }
+
+    public int getBufferSize() {
+        return bufferSize;
+    }
+
+    public Sink getSink() {
+        return sink;
+    }
+}
+5. Logger Interface
+java
+Copy code
+public interface Logger {
+    void log(LogLevel level, String message);
+    void info(String message);
+    void warn(String message);
+    void debug(String message);
+    void error(String message);
+    void fatal(String message);
+    void shutdown();
+}
+6. SyncLogger and AsyncLogger Implementations
+java
+Copy code
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
+public class SyncLogger implements Logger {
+    private final Sink sink;
+
+    public SyncLogger(Configuration config) {
+        this.sink = config.getSink();
+    }
+
+    @Override
+    public void log(LogLevel level, String message) {
+        if (level.ordinal() >= sink.getLevel().ordinal()) {
+            sink.log(new Message(message, level));
+        }
+    }
+
+    @Override
+    public void info(String message) { log(LogLevel.INFO, message); }
+    @Override
+    public void warn(String message) { log(LogLevel.WARN, message); }
+    @Override
+    public void debug(String message) { log(LogLevel.DEBUG, message); }
+    @Override
+    public void error(String message) { log(LogLevel.ERROR, message); }
+    @Override
+    public void fatal(String message) { log(LogLevel.FATAL, message); }
+
+    @Override
+    public void shutdown() {
+        // No-op for synchronous logger
+    }
+}
+
+public class AsyncLogger implements Logger {
+    private final Sink sink;
+    private final BlockingQueue<Message> queue;
+    private final Thread worker;
+    private volatile boolean running;
+
+    public AsyncLogger(Configuration config) {
+        this.sink = config.getSink();
+        this.queue = new LinkedBlockingQueue<>(config.getBufferSize());
+        this.running = true;
+
+        this.worker = new Thread(() -> {
+            while (running || !queue.isEmpty()) {
+                try {
+                    Message message = queue.take();
+                    sink.log(message);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        worker.start();
+    }
+
+    @Override
+    public void log(LogLevel level, String message) {
+        if (level.ordinal() >= sink.getLevel().ordinal()) {
+            queue.offer(new Message(message, level));
+        }
+    }
+
+    @Override
+    public void info(String message) { log(LogLevel.INFO, message); }
+    @Override
+    public void warn(String message) { log(LogLevel.WARN, message); }
+    @Override
+    public void debug(String message) { log(LogLevel.DEBUG, message); }
+    @Override
+    public void error(String message) { log(LogLevel.ERROR, message); }
+    @Override
+    public void fatal(String message) { log(LogLevel.FATAL, message); }
+
+    @Override
+    public void shutdown() {
+        running = false;
+        worker.interrupt();
+    }
+}
+7. Logger Factory
+java
+Copy code
+public class LoggerFactory {
+    public static Logger createLogger(Configuration config) {
+        return config.isAsync() ? new AsyncLogger(config) : new SyncLogger(config);
+    }
+}
+8. Main Driver Application
+java
+Copy code
+public class Main {
+    public static void main(String[] args) {
+        Sink consoleSink = new ConsoleSink(LogLevel.INFO);
+        Configuration config = new Configuration("yyyy-MM-dd HH:mm:ss", LogLevel.INFO, true, 25, consoleSink);
+        Logger logger = LoggerFactory.createLogger(config);
+
+        logger.info("Info message");
+        logger.warn("Warn message");
+        logger.debug("Debug message");  // This won't be logged due to log level
+        logger.error("Error message");
+
+        logger.shutdown();
+    }
+}
+9. Tests (Using JUnit)
+java
+Copy code
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+public class LoggerTest {
+    private Logger logger;
+    private Configuration syncConfig;
+    private Configuration asyncConfig;
+
+    @BeforeEach
+    public void setUp() {
+        Sink consoleSink = new ConsoleSink(LogLevel.INFO);
+        syncConfig = new Configuration("yyyy-MM-dd HH:mm:ss", LogLevel.INFO, false, 25, consoleSink);
+        asyncConfig = new Configuration("yyyy-MM-dd HH:mm:ss", LogLevel.INFO, true, 25, consoleSink);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        if (logger != null) {
+            logger.shutdown();
+        }
+    }
+
+    @Test
+    public void testSyncLogging() {
+        logger = LoggerFactory.createLogger(syncConfig);
+        logger.info("Sync Info message");
+        logger.warn("Sync Warn message");
+        logger.error("Sync Error message");
+    }
+
+    @Test
+    public void testAsyncLogging() {
+        logger = LoggerFactory.createLogger(asyncConfig);
+        logger.info("Async Info message");
+        logger.warn("Async Warn message");
+        logger.error("Async Error message");
+    }
+
+    @Test
+    public void testConcurrentLogging() throws InterruptedException {
+        logger = LoggerFactory.createLogger(asyncConfig);
+
+        Runnable logTask = () -> {
+            for (int i = 0; i < 100; i++) {
+                logger.info("Concurrent Info message " + i);
+            }
+        };
+
+        Thread thread1 = new Thread(logTask);
+        Thread thread2 = new Thread(logTask);
+
+        thread1.start();
+        thread2.start();
+
+        thread1.join();
+        thread2.join();
+
+        logger.shutdown();
+    }
+}
+This implementation covers the basic requirements and demonstrates the use of synchronous and asynchronous logging with thread-safe message handling.
+
+
+
+
+
+
+
